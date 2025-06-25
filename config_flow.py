@@ -60,6 +60,7 @@ class H806SBFlowHandler(config_entries.ConfigFlow):
                 return {"ip": ip, "serial": serial.hex(), "name": name}
             return None
         finally:
+            _LOGGER.debug("Closing socket for discovery")
             discovery.close()
 
 class H806SBOptionsFlowHandler(config_entries.OptionsFlow):

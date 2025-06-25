@@ -1,7 +1,7 @@
 import asyncio
 import socket
 import logging
-from typing import Optional
+from ipaddress import ip_address
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -15,20 +15,40 @@ class LedController:
         self._udp_socket = None
         self._serial_number = bytearray([0]*4)
         
-        # Базовый пакет (как в вашем оригинальном коде)
-        self._base_packet = bytearray([
-            0xFB, 0xC1, 0x00, 0x50, 0x00, 0x01,
-            0x00, 0xAE, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00
+        # base packet
+        self.packet = bytearray([
+            0xFB, 0xC1,              # Command bytes
+            0x00,                    # Counter (will be increased)
+            0x50,                    # Speed (by default 80)
+            0x00,                    # Brightness (by default 0)
+            0x01,                    # Single file playback
+            0x00, 0xAE,              # Unknown bytes
+            0x00, 0x00, 0x00, 0x00,  # Constants as serial number
+            0x00, 0x00, 0x00, 0x00   # Serial number (will be filling after discovery)
         ])
-        _LOGGER.debug("Init of Led Controller completed!")
+
+    @staticmethod
+    def compare_ips(ip1: str, ip2: str) -> bool:
+        try:
+            return ip_address(ip1) == ip_address(ip2)
+        except ValueError:
+            return ip1 == ip2
 
     async def async_initialize(self):
         """Инициализация сокета (вызывается при старте)."""
-        self._udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        self._udp_socket.setblocking(False)
-        _LOGGER.debug("UDP socket initialized for %s:%s", self._host, self._port)
+        try:
+            if hasattr(self, '_udp_socket') and self._udp_socket:
+                self._udp_socket.close()
+                
+            self._udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
+            self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self._udp_socket.setblocking(False)
+            _LOGGER.debug("UDP socket initialized for %s:%s", self._host, self._port)
+            
+        except Exception as e:
+            _LOGGER.error(f"Socket initialization failed: {e}")
+            raise
 
     async def async_send_packet(self, brightness: int, speed: int, is_on: bool):
         """Отправка пакета на устройство."""
@@ -55,36 +75,113 @@ class LedController:
             _LOGGER.error("Error sending UDP packet: %s", err)
             return False
     
-    async def async_check_availability(self, timeout: float = 2.0) -> bool:
-        """Проверка доступности устройства с ожиданием ответа."""
-        if not self._udp_socket:
-            await self.async_initialize()
+    # async def async_check_availability(self, timeout: float = 2.0) -> bool:
+    #     """Проверка доступности устройства с ожиданием ответа."""
         
-        # Создаем сокет для получения ответа
-        loop = asyncio.get_event_loop()
-        try:
-            # Отправляем проверочный пакет (пример заголовка 0xAB 0x01)
-            check_packet = bytearray([0xAB, 0x01, 0x00, 0x02]) + bytes(4) + self._serial_number
-            _LOGGER.debug(f"Sending alive check packet: {check_packet.hex()}")
-            self._udp_socket.sendto(check_packet, (self._host, self._port))
-            
-            # Ожидаем ответ с таймаутом
-            data, _ = await asyncio.wait_for(
-                loop.sock_recv(self._udp_socket, 12),
-                timeout=timeout
-            )
-            _LOGGER.debug(f"Recived data: {data.hex()}")
-            # Проверяем заголовок ответа (пример: должен начинаться с 0xFB 0xO1)
-            return len(data) >= 2 and data[0] == 0xAB and data[1] == 0x01
-        except (asyncio.TimeoutError, socket.error):
-            return False
+        
+    #     if not self._udp_socket:
+    #         await self.async_initialize()
 
+    #     loop = asyncio.get_event_loop()
+    #     try:
+    #         # 1. Подготовка проверочного пакета
+    #         check_packet = bytearray([0xFB, 0xC1, 0x00, 0x02]) + bytes(4) + self._serial_number
+    #         _LOGGER.debug(f"Sending alive check: {check_packet.hex()} to {self._host}:{self._port}")
+
+    #         # 2. Явная привязка к порту для получения ответа
+    #         self._udp_socket.bind(('0.0.0.0', 4882))
+    #         await loop.sock_sendto(self._udp_socket, check_packet, (self._host, 4626))
+
+    #         # 4. Ожидание ответа
+    #         data, addr = await asyncio.wait_for(
+    #             loop.sock_recvfrom(self._udp_socket, 64),  # Буфер 64 байт
+    #             timeout=timeout
+    #         )
+            
+    #         _LOGGER.debug(f"Received from {addr}: {data.hex()}")
+    #         return (data[0] == 0xFB and 
+    #                 data[1] == 0xC0 and 
+    #                 self.compare_ips(addr[0], self._host))
+            
+    #     except (asyncio.TimeoutError, socket.error) as e:
+    #         _LOGGER.debug(f"Device not responding: {type(e).__name__}")
+    #         return False
+    #     except Exception as e:
+    #         _LOGGER.error(f"Availability check error: {e}", exc_info=True)
+    #         return False
+
+    async def async_check_availability(self, timeout: float = 2.0) -> bool:
+        """Проверка доступности устройства с улучшенной обработкой ошибок."""
+        try:
+            # 1. Надежная проверка и инициализация сокета
+            if not hasattr(self, '_udp_socket') or self._udp_socket is None:
+                await self.async_initialize()
+            elif getattr(self._udp_socket, '_closed', True):  # Безопасная проверка закрытости
+                self._udp_socket.close()
+                await self.async_initialize()
+
+            # 2. Формирование проверочного пакета (18 байт)
+            check_packet = bytearray([
+                0xFB, 0xC1, 0x00, 0x02,  # Заголовок команды
+                0x00, 0x00, 0x00, 0x00,  # Резервные байты
+                *self._serial_number,    # Серийный номер (4 байта)
+            ])
+
+            _LOGGER.debug(f"Sending alive check: {check_packet.hex()} to {self._host}:{self._port}")
+
+            # 3. Привязка к конкретному порту (как в рабочем примере)
+            self._udp_socket.bind(('0.0.0.0', 4882))
+
+            # 4. Отправка запроса
+            loop = asyncio.get_event_loop()
+            await loop.sock_sendto(self._udp_socket, check_packet, (self._host, 4626))
+
+            # 5. Ожидание ответа с частичными таймаутами
+            start_time = loop.time()
+            while (loop.time() - start_time) < timeout:
+                try:
+                    data, addr = await asyncio.wait_for(
+                        loop.sock_recvfrom(self._udp_socket, 64),
+                        timeout=0.5  # Частичный таймаут для проверки
+                    )
+                    
+                    _LOGGER.debug(f"Received from {addr[0]}:{addr[1]}: {data.hex()}")
+                    
+                    # Проверка ответа
+                    if (len(data) >= 2 and 
+                        data[0] == 0xFB and 
+                        data[1] == 0xC0 and 
+                        self.compare_ips(addr[0], self._host)):
+                        return True
+                    
+                except (asyncio.TimeoutError, socket.timeout):
+                    continue
+                except OSError as e:
+                    _LOGGER.warning(f"Socket error: {e}")
+                    break
+
+        except Exception as e:
+            _LOGGER.error(f"Availability check failed: {e}", exc_info=True)
+        
+        return False
 
     async def async_close(self):
         """Очистка ресурсов."""
         if self._udp_socket:
             self._udp_socket.close()
-            
+
+    def calculate_checksum(data):
+        """Calculate UDP checksum manually"""
+        if len(data) % 2 != 0:
+            data += b'\x00'
+        checksum = 0
+        for i in range(0, len(data), 2):
+            word = (data[i] << 8) + data[i+1]
+            checksum += word
+        checksum = (checksum >> 16) + (checksum & 0xffff)
+        checksum = ~checksum & 0xffff
+        return checksum
+
     def set_serial_number(self, serial_number: str):
         """Setting the serial number with zero filling and reverse..
         
