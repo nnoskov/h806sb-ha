@@ -80,7 +80,7 @@ class LedController:
     async def async_check_availability(self, timeout: float = 2.0) -> bool:
         """Check of availability of led controller"""
         try:
-            # 1. Проверка и инициализация сокета
+            # Check of initialization of socket
             if not hasattr(self, '_udp_socket') or self._udp_socket is None:
                 await self.async_initialize()
             elif getattr(self._udp_socket, '_closed', True):
