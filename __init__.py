@@ -62,7 +62,7 @@ class H806SBCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="H806SB Device Status",
-            update_interval=timedelta(seconds=5)  # Проверка каждые 10 секунд
+            update_interval=timedelta(seconds=5)  # Check every 5 seconds
         )
         self.controller = controller
         
