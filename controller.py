@@ -44,7 +44,6 @@ class LedController:
             self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
             self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             self._udp_socket.setblocking(False)
-            self._udp_socket.bind(('0.0.0.0', 4882))
             _LOGGER.debug("UDP socket initialized for %s:%s", self._host, self._port)
             
         except Exception as e:
@@ -108,7 +107,6 @@ class LedController:
                         loop.sock_recvfrom(self._udp_socket, 64),
                         timeout=0.5
                     )
-                    
                     _LOGGER.debug(f"Received from {addr[0]}:{addr[1]}: {data.hex()}")
                     
                     # Parsing the answer
@@ -126,7 +124,6 @@ class LedController:
 
         except Exception as e:
             _LOGGER.error(f"Availability check failed: {e}", exc_info=True)
-        
         return False
 
     async def async_close(self):

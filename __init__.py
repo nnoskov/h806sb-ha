@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN
+from .const import DOMAIN, TRACK_INTERVAL
 from .controller import LedController
 from datetime import timedelta
 
@@ -24,8 +24,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Setting up from a config entry."""
     
     controller = LedController(host=entry.data["host"])
-
-    controller.set_serial_number(entry.data["serial_number"])
 
     # Create coordinator for periodically check
     coordinator = H806SBCoordinator(hass, controller)
@@ -62,7 +60,7 @@ class H806SBCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="H806SB Device Status",
-            update_interval=timedelta(seconds=5)  # Check every 5 seconds
+            update_interval=TRACK_INTERVAL
         )
         self.controller = controller
         

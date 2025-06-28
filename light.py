@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 
 from .controller import LedController
-from .const import DOMAIN
+from .const import DOMAIN, TRACK_INTERVAL
 import logging
 from datetime import timedelta
 
@@ -49,7 +49,7 @@ class H806SBCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="H806SB Device Status",
-            update_interval=timedelta(seconds=30)
+            update_interval=TRACK_INTERVAL
         )
         self.controller = controller
     
