@@ -44,6 +44,7 @@ class LedController:
             self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
             self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             self._udp_socket.setblocking(False)
+            self._udp_socket.bind(('0.0.0.0', 4882))
             _LOGGER.debug("UDP socket initialized for %s:%s", self._host, self._port)
             
         except Exception as e:
@@ -74,53 +75,77 @@ class LedController:
         except Exception as err:
             _LOGGER.error("Error sending UDP packet: %s", err)
             return False
-    
-    # async def async_check_availability(self, timeout: float = 2.0) -> bool:
-    #     """Проверка доступности устройства с ожиданием ответа."""
-        
-        
-    #     if not self._udp_socket:
-    #         await self.async_initialize()
 
-    #     loop = asyncio.get_event_loop()
+    # async def async_check_availability(self, timeout: float = 2.0) -> bool:
+    #     """Проверка доступности устройства с улучшенной обработкой ошибок."""
     #     try:
-    #         # 1. Подготовка проверочного пакета
-    #         check_packet = bytearray([0xFB, 0xC1, 0x00, 0x02]) + bytes(4) + self._serial_number
+    #         # 1. Надежная проверка и инициализация сокета
+    #         if not hasattr(self, '_udp_socket') or self._udp_socket is None:
+    #             await self.async_initialize()
+    #         elif getattr(self._udp_socket, '_closed', True):  # Безопасная проверка закрытости
+    #             self._udp_socket.close()
+    #             await self.async_initialize()
+    #         else:
+    #             # Check. Bind socket
+    #             try:
+    #                 self._udp_socket.getcocketname()
+    #             except OSError:
+    #                 await self.async_initialize()
+    #         # 2. Формирование проверочного пакета (18 байт)
+    #         check_packet = bytearray([
+    #             0xFB, 0xC1, 0x00, 0x02,  # Заголовок команды
+    #             0x00, 0x00, 0x00, 0x00,  # Резервные байты
+    #             *self._serial_number,    # Серийный номер (4 байта)
+    #         ])
+
     #         _LOGGER.debug(f"Sending alive check: {check_packet.hex()} to {self._host}:{self._port}")
 
-    #         # 2. Явная привязка к порту для получения ответа
-    #         self._udp_socket.bind(('0.0.0.0', 4882))
+            
+
+    #         # 3. Отправка запроса
+    #         loop = asyncio.get_event_loop()
     #         await loop.sock_sendto(self._udp_socket, check_packet, (self._host, 4626))
 
-    #         # 4. Ожидание ответа
-    #         data, addr = await asyncio.wait_for(
-    #             loop.sock_recvfrom(self._udp_socket, 64),  # Буфер 64 байт
-    #             timeout=timeout
-    #         )
-            
-    #         _LOGGER.debug(f"Received from {addr}: {data.hex()}")
-    #         return (data[0] == 0xFB and 
-    #                 data[1] == 0xC0 and 
-    #                 self.compare_ips(addr[0], self._host))
-            
-    #     except (asyncio.TimeoutError, socket.error) as e:
-    #         _LOGGER.debug(f"Device not responding: {type(e).__name__}")
-    #         return False
+    #         # 4. Ожидание ответа с частичными таймаутами
+    #         start_time = loop.time()
+    #         while (loop.time() - start_time) < timeout:
+    #             try:
+    #                 data, addr = await asyncio.wait_for(
+    #                     loop.sock_recvfrom(self._udp_socket, 64),
+    #                     timeout=0.5  # Частичный таймаут для проверки
+    #                 )
+                    
+    #                 _LOGGER.debug(f"Received from {addr[0]}:{addr[1]}: {data.hex()}")
+                    
+    #                 # Проверка ответа
+    #                 if (len(data) >= 2 and 
+    #                     data[0] == 0xFB and 
+    #                     data[1] == 0xC0 and 
+    #                     self.compare_ips(addr[0], self._host)):
+    #                     return True
+                    
+    #             except (asyncio.TimeoutError, socket.timeout):
+    #                 continue
+    #             except OSError as e:
+    #                 _LOGGER.warning(f"Socket error: {e}")
+    #                 break
+
     #     except Exception as e:
-    #         _LOGGER.error(f"Availability check error: {e}", exc_info=True)
-    #         return False
+    #         _LOGGER.error(f"Availability check failed: {e}", exc_info=True)
+        
+    #     return False
 
     async def async_check_availability(self, timeout: float = 2.0) -> bool:
         """Проверка доступности устройства с улучшенной обработкой ошибок."""
         try:
-            # 1. Надежная проверка и инициализация сокета
+            # 1. Проверка и инициализация сокета
             if not hasattr(self, '_udp_socket') or self._udp_socket is None:
                 await self.async_initialize()
-            elif getattr(self._udp_socket, '_closed', True):  # Безопасная проверка закрытости
+            elif getattr(self._udp_socket, '_closed', True):
                 self._udp_socket.close()
                 await self.async_initialize()
 
-            # 2. Формирование проверочного пакета (18 байт)
+            # 2. Формирование проверочного пакета
             check_packet = bytearray([
                 0xFB, 0xC1, 0x00, 0x02,  # Заголовок команды
                 0x00, 0x00, 0x00, 0x00,  # Резервные байты
@@ -129,20 +154,19 @@ class LedController:
 
             _LOGGER.debug(f"Sending alive check: {check_packet.hex()} to {self._host}:{self._port}")
 
-            # 3. Привязка к конкретному порту (как в рабочем примере)
-            self._udp_socket.bind(('0.0.0.0', 4882))
+            # 3. УДАЛЕНА ОШИБОЧНАЯ ПРИВЯЗКА - больше не пытаемся bind здесь!
 
             # 4. Отправка запроса
             loop = asyncio.get_event_loop()
             await loop.sock_sendto(self._udp_socket, check_packet, (self._host, 4626))
 
-            # 5. Ожидание ответа с частичными таймаутами
+            # 5. Ожидание ответа
             start_time = loop.time()
             while (loop.time() - start_time) < timeout:
                 try:
                     data, addr = await asyncio.wait_for(
                         loop.sock_recvfrom(self._udp_socket, 64),
-                        timeout=0.5  # Частичный таймаут для проверки
+                        timeout=0.5
                     )
                     
                     _LOGGER.debug(f"Received from {addr[0]}:{addr[1]}: {data.hex()}")

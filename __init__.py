@@ -27,7 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     controller.set_serial_number(entry.data["serial_number"])
 
-    # Создаем координатор для периодической проверки
+    # Create coordinator for periodically check
     coordinator = H806SBCoordinator(hass, controller)
     await coordinator.async_config_entry_first_refresh()
 
@@ -54,7 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     return True
 
 class H806SBCoordinator(DataUpdateCoordinator):
-    """Координатор для проверки состояния устройства."""
+    """Coordiantor for periodically check."""
     
     def __init__(self, hass, controller):
         """Initialize."""
@@ -62,12 +62,12 @@ class H806SBCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="H806SB Device Status",
-            update_interval=timedelta(seconds=10)  # Проверка каждые 10 секунд
+            update_interval=timedelta(seconds=5)  # Проверка каждые 10 секунд
         )
         self.controller = controller
         
     async def _async_update_data(self):
-        """Проверка доступности устройства."""
+        """Checking the available devices."""
         try:
             available = await self.controller.async_check_availability()
             return {"available": available}
