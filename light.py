@@ -27,22 +27,22 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Настройка платформы света."""
+    """Setting up the light platform."""
     config = entry.data
     
-    # Создаем контроллер и устанавливаем серийный номер
+    # Create a controller and set the serial number
     controller = LedController(host=config["host"])
     if "serial_number" in config:
         controller.set_serial_number(config["serial_number"])
     
-    # Создаем координатор для проверки состояния устройства
+    # Create a coordinator to check the device status
     coordinator = H806SBCoordinator(hass, controller)
     await coordinator.async_config_entry_first_refresh()
     
     async_add_entities([H806SBLight(coordinator, controller, config)])
 
 class H806SBCoordinator(DataUpdateCoordinator):
-    """Координатор для проверки состояния устройства."""
+    """Coordinator for checking the device status."""
     
     def __init__(self, hass: HomeAssistant, controller: LedController):
         super().__init__(
@@ -54,16 +54,17 @@ class H806SBCoordinator(DataUpdateCoordinator):
         self.controller = controller
     
     async def _async_update_data(self) -> dict[str, Any]:
-        """Проверка доступности устройства."""
+        """Checking device availability."""
         try:
             available = await self.controller.async_check_availability()
+            _LOGGER.debug(f"available:{available}")
             return {"available": available}
         except Exception as err:
             _LOGGER.error("Error checking device status: %s", err)
             raise UpdateFailed(f"Error communicating with device: {err}")
 
 class H806SBLight(CoordinatorEntity, LightEntity):
-    """Реализация управления H806SB светом."""
+    """Implementation of H806SB light control."""
     
     _attr_color_mode = ColorMode.RGB
     _attr_supported_color_modes = {ColorMode.RGB}
@@ -74,7 +75,7 @@ class H806SBLight(CoordinatorEntity, LightEntity):
         controller: LedController,
         config: dict
     ) -> None:
-        """Инициализация."""
+        """Initialization."""
         super().__init__(coordinator)
         self._controller = controller
         self._config = config
@@ -83,21 +84,21 @@ class H806SBLight(CoordinatorEntity, LightEntity):
         self._attr_is_on = False
         self._attr_brightness = 255
         self._attr_rgb_color = (255, 255, 255)
-        self._default_speed = 80
+        self._default_speed = 20
 
     async def async_added_to_hass(self) -> None:
-        """При добавлении в HA."""
+        """When adding to home assistant"""
         await super().async_added_to_hass()
         self._handle_coordinator_update()
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Обработка обновлений от координатора."""
+        """Handling data from coordinator."""
         self._attr_available = self.coordinator.data.get("available", False)
         self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Включение света с параметрами."""
+        """Turn on light with parameters."""
         if not self._attr_available:
             raise HomeAssistantError("Device is not available")
         
@@ -106,8 +107,7 @@ class H806SBLight(CoordinatorEntity, LightEntity):
         
         if ATTR_RGB_COLOR in kwargs:
             self._attr_rgb_color = kwargs[ATTR_RGB_COLOR]
-            # Здесь можно добавить обработку RGB
-        
+            #TODO RGB Handling
         try:
             success = await self._controller.async_send_packet(
                 brightness=device_brightness,
@@ -122,19 +122,19 @@ class H806SBLight(CoordinatorEntity, LightEntity):
             self.async_write_ha_state()
             
         except Exception as err:
-            _LOGGER.error("Error turning on light: %s", err)
+            _LOGGER.error(f"Error turning on light:{err}")
             raise HomeAssistantError(f"Error turning on light: {err}")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Выключение света."""
+        """Turn Off Light."""
         if not self._attr_available:
             raise HomeAssistantError("Device is not available")
             
         try:
             success = await self._controller.async_send_packet(
                 brightness=0,
-                speed=0,
-                is_on=False
+                speed=20,
+                is_on=True
             )
             if not success:
                 raise HomeAssistantError("Failed to send command to device")
@@ -147,6 +147,6 @@ class H806SBLight(CoordinatorEntity, LightEntity):
             raise HomeAssistantError(f"Error turning off light: {err}")
 
     async def async_will_remove_from_hass(self) -> None:
-        """Очистка при удалении интеграции."""
+        """Clearing during integration deletion."""
         await super().async_will_remove_from_hass()
         await self._controller.async_close()

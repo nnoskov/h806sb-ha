@@ -16,10 +16,10 @@ class LedController:
         self._serial_number = bytearray([0]*4)
         
         # base packet
-        self.packet = bytearray([
+        self._base_packet = bytearray([
             0xFB, 0xC1,              # Command bytes
             0x00,                    # Counter (will be increased)
-            0x50,                    # Speed (by default 80)
+            0x20,                    # Speed (by default 80)
             0x00,                    # Brightness (by default 0)
             0x01,                    # Single file playback
             0x00, 0xAE,              # Unknown bytes
@@ -38,14 +38,32 @@ class LedController:
         """Initialization of socket (during start process)."""
         try:
             if hasattr(self, '_udp_socket') and self._udp_socket:
-                self._udp_socket.close()
-                
+                try:
+                    self._udp_socket.close()
+                except:
+                    pass
+            loop = asyncio.get_event_loop()        
             self._udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+            #settings of socket
             self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
-            self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            #self._udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             self._udp_socket.setblocking(False)
-            _LOGGER.debug("UDP socket initialized for %s:%s", self._host, self._port)
-            
+            try:
+                self._udp_socket.bind(('0.0.0.0', 4882))
+                _LOGGER.debug("Socket bound to port 4882")
+
+            except OSError as e:
+                # Если не получилось - используем случайный порт
+                _LOGGER.warning(f"Could not bind to port 4882: {e}, using random port")
+                try:
+                    self._udp_socket.bind(('0.0.0.0', 0))
+                    _LOGGER.debug(f"Socket bound to random port: {self._udp_socket.getsockname()[1]}")
+                except OSError as e:
+                    _LOGGER.error(f"Failed to bind socket: {e}")
+                    self._udp_socket.close()
+                    self._udp_socket = None
+                    raise
         except Exception as e:
             _LOGGER.error(f"Socket initialization failed: {e}")
             raise
@@ -53,14 +71,13 @@ class LedController:
     async def async_send_packet(self, brightness: int, speed: int, is_on: bool):
         """Send control packet to device."""
         if not self._udp_socket:
-            await self.async_initialize()
-            
+            await self.async_initialize() 
         packet = bytearray(self._base_packet)
         packet[2] = (self._command_counter + 1) % 256
         packet[3] = max(1, min(100, speed))  # speed 1-100
         packet[4] = max(0, min(31, brightness))  # brightness 0-31
         packet[5] = 1 if is_on else 0
-        packet[13:16] = self._serial_number
+        packet[12:15] = self._serial_number
         
         try:
             await asyncio.get_event_loop().sock_sendto(
@@ -75,56 +92,51 @@ class LedController:
             _LOGGER.error("Error sending UDP packet: %s", err)
             return False
 
-   
     async def async_check_availability(self, timeout: float = 2.0) -> bool:
-        """Check of availability of led controller"""
+        """Check availability of led controller"""
         try:
-            # Check of initialization of socket
-            if not hasattr(self, '_udp_socket') or self._udp_socket is None:
-                await self.async_initialize()
-            elif getattr(self._udp_socket, '_closed', True):
-                self._udp_socket.close()
-                await self.async_initialize()
-
-            # Preparing a package for check
+            # Reinitialize socket if needed
+            if not hasattr(self, '_udp_socket') or self._udp_socket is None or getattr(self._udp_socket, '_closed', True):
+                await self.async_initialize()  # Создаем новый сокет
+            
+            # Формат пакета из дампа
             check_packet = bytearray([
-                0xFB, 0xC1, 0x00, 0x02,  # Header
+                0xAB, 0x01, 0x00, 0x02,  # Header
                 0x00, 0x00, 0x00, 0x00,  # Reserved bytes
-                *self._serial_number,    # Serial number (4 bytes)
+                0x00, 0x00, 0x00, 0x00   # Serial number
             ])
 
-            _LOGGER.debug(f"Sending alive check: {check_packet.hex()} to {self._host}:{self._port}")
+            _LOGGER.debug(f"Sending alive check: {check_packet.hex()} to {self._host}:4626")
 
-            # Sending the packet
+            # Отправка на порт 4626
             loop = asyncio.get_event_loop()
             await loop.sock_sendto(self._udp_socket, check_packet, (self._host, 4626))
 
-            # Waiting an answer
-            start_time = loop.time()
-            while (loop.time() - start_time) < timeout:
-                try:
-                    data, addr = await asyncio.wait_for(
-                        loop.sock_recvfrom(self._udp_socket, 64),
-                        timeout=0.5
-                    )
-                    _LOGGER.debug(f"Received from {addr[0]}:{addr[1]}: {data.hex()}")
+            # Ожидание ответа
+            try:
+                data, addr = await asyncio.wait_for(
+                    loop.sock_recvfrom(self._udp_socket, 128),
+                    timeout=timeout
+                )
+                _LOGGER.debug(f"Received from {addr[0]}:{addr[1]}: {data.hex()}")
+                
+                # Проверка только первых 2 байт
+                if len(data) >= 2 and data[0] == 0xAB and data[1] == 0x02:
+                    return True
                     
-                    # Parsing the answer
-                    if (len(data) >= 2 and 
-                        data[0] == 0xFB and 
-                        data[1] == 0xC0 and 
-                        self.compare_ips(addr[0], self._host)):
-                        return True
-                    
-                except (asyncio.TimeoutError, socket.timeout):
-                    continue
-                except OSError as e:
-                    _LOGGER.warning(f"Socket error: {e}")
-                    break
+            except (asyncio.TimeoutError, socket.timeout):
+                _LOGGER.debug("No response received within timeout")
+            except OSError as e:
+                _LOGGER.warning(f"Socket error: {e}")
+                # Закрываем сокет при ошибке
+                self._udp_socket.close()
+                self._udp_socket = None
+
+            return False
 
         except Exception as e:
             _LOGGER.error(f"Availability check failed: {e}", exc_info=True)
-        return False
+            return False
 
     async def async_close(self):
         """Cleaning of resources."""

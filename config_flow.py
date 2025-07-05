@@ -1,14 +1,26 @@
 from homeassistant import config_entries, exceptions
 from homeassistant.core import callback
+from homeassistant.helpers.selector import selector, SelectOptionDict
 
 import voluptuous as vol
 import logging
 
 from .discovery import H806SBDiscovery
 from .controller import LedController
-from .const import DOMAIN, CONFIG_VERSION
+from .const import (
+    DOMAIN, 
+    CONFIG_VERSION, 
+    CONF_ACTION,
+    CONF_AUTO_DISCOVERY,
+    CONF_MANUAL_SETUP,
+    )
 
 _LOGGER = logging.getLogger(__name__)
+
+CONF_ACTIONS = {
+    CONF_AUTO_DISCOVERY: "Automatic Discovery",
+    CONF_MANUAL_SETUP: "Manual Setup",
+}
 
 @config_entries.HANDLERS.register(DOMAIN)
 class H806SBFlowHandler(config_entries.ConfigFlow):
@@ -20,6 +32,7 @@ class H806SBFlowHandler(config_entries.ConfigFlow):
     def __init__(self):
         """Initialize the config flow."""
         self.discovered_device = None
+        self._errors = {}
 
     @staticmethod
     @callback
@@ -29,26 +42,28 @@ class H806SBFlowHandler(config_entries.ConfigFlow):
         return H806SBOptionsFlowHandler(config_entry)
 
     async def async_step_user(self, user_input=None):
-        """Handle the initial step."""
-        if user_input is None:
-            return await self.async_step_choice()
-
-        if user_input["discovery_method"] == "auto":
-            return await self.async_step_auto_discovery()
-        else:
-            return await self.async_step_manual()
+        """Handle a flow initialized by the user."""
+        return await self.async_step_choice()
 
 
     async def async_step_choice(self, user_input=None):
         """Choice of type settings."""
+      
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_ACTION, default=CONF_AUTO_DISCOVERY): vol.In(CONF_ACTIONS),
+            }
+        )
+
+        if user_input is not None:
+            if user_input.get(CONF_ACTION) == CONF_AUTO_DISCOVERY:
+                return await self.async_step_auto_discovery()
+            else:
+                return await self.async_step_manual()
+
         return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({
-                vol.Required("discovery_method", default="auto"): vol.In({
-                    "auto": "Automatic Discovery",
-                    "manual": "Manual Entry"
-                })
-            })
+            step_id="choice",
+            data_schema=data_schema,
         )
 
     async def async_step_auto_discovery(self, user_input=None):
