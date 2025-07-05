@@ -14,7 +14,7 @@ from .controller import LedController
 from datetime import timedelta
 
 _LOGGER = logging.getLogger(__name__)
-_PLATFORMS: list[Platform] = [Platform.LIGHT]
+_PLATFORMS: list[str] = ["light"]
 
 async def async_setup(hass: HomeAssistant, config: dict):
     """Setting integration by configuration.yaml."""
@@ -29,11 +29,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     coordinator = H806SBCoordinator(hass, controller)
     await coordinator.async_config_entry_first_refresh()
 
-    config = {}
-    for key, value in entry.data.items():
-        config[key] = value
-    for key, value in entry.options.items():
-        config[key] = value
+    config = {**entry.data, **entry.options}
     if entry.options:
         hass.config_entries.async_update_entry(entry, data=config, options={})
 
@@ -68,12 +64,19 @@ class H806SBCoordinator(DataUpdateCoordinator):
         """Checking the available devices."""
         try:
             available = await self.controller.async_check_availability()
+            _LOGGER.debug(f"available:{available}")
             return {"available": available}
         except Exception as err:
             _LOGGER.error("Error checking device availability: %s", err)
             raise UpdateFailed(f"Error checking device: {err}")
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Upload integrations."""
-    return await hass.config_entries.async_forward_entry_unload(entry, _PLATFORMS)
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, _PLATFORMS):
+        # Remove data of integration
+        hass.data[DOMAIN].pop(entry.entry_id)
+        # In case last integration - clear domain
+        if not hass.data[DOMAIN]:
+            hass.data.pop(DOMAIN)
+    return unload_ok
